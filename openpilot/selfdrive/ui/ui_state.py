@@ -15,6 +15,7 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
 
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
+OLED_AUTO_OFF_TIME_S = 10.0
 
 
 class UIStatus(Enum):
@@ -244,6 +245,7 @@ class Device:
     self._interactive_timeout_callbacks: list[Callable] = []
     self._prev_timed_out = False
     self._awake: bool = True
+    self._oled_auto_off_start_time: float = 0.0
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0
@@ -341,7 +343,40 @@ class Device:
         callback()
     self._prev_timed_out = interaction_timeout
 
-    self._set_awake(ui_state.ignition or not interaction_timeout or PC)
+    touch = any(ev.left_down for ev in gui_app.mouse_events)
+
+    ss = ui_state.sm["selfdriveState"]
+    alert_active = ss.alertStatus in (
+      log.SelfdriveState.AlertStatus.userPrompt,
+      log.SelfdriveState.AlertStatus.critical,
+    )
+
+    # Keep OLED awake while an external navigation countdown alert is active.
+    nav_left_sec = int(ui_state.sm["carrotMan"].leftSec)
+    nav_alert_active = ui_state.sm.valid["carrotMan"] and 0 <= nav_left_sec <= 11
+
+    if not ui_state.ignition:
+      self._oled_auto_off_start_time = 0.0
+      self._set_awake(not interaction_timeout or PC)
+    elif ui_state.started:
+      if alert_active or nav_alert_active:
+        # Keep OLED on while an important visual/navigation alert is active.
+        self._oled_auto_off_start_time = 0.0
+        self._set_awake(True)
+      elif touch:
+        self._oled_auto_off_start_time = time.monotonic()
+        self._set_awake(True)
+      else:
+        if self._oled_auto_off_start_time <= 0.0:
+          self._oled_auto_off_start_time = time.monotonic()
+
+        if (time.monotonic() - self._oled_auto_off_start_time) >= OLED_AUTO_OFF_TIME_S and not PC:
+          self._set_awake(False)
+        else:
+          self._set_awake(True)
+    else:
+      self._oled_auto_off_start_time = 0.0
+      self._set_awake(True)
 
   def _set_awake(self, on: bool):
     if on != self._awake:
