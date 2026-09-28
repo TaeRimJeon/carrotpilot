@@ -6,7 +6,7 @@ from openpilot.cereal import car
 import openpilot.cereal.messaging as messaging
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_DMON, Ratekeeper, config_realtime_process
-from openpilot.selfdrive.monitoring.config import experimental_mode
+from openpilot.selfdrive.monitoring.config import drowsy_only_mode, experimental_mode
 from openpilot.selfdrive.carrot.bluetooth.model import CommandReader
 from openpilot.selfdrive.monitoring.dm2 import DriverMonitoring2
 from openpilot.selfdrive.monitoring.dm2_context import CameraAvailability, InteractionEdges, ObjectObservation, SteeringTouchEvidence, TrafficContext
@@ -57,7 +57,7 @@ def parked_reset_eligible(sm, now, demo=False):
           not state.enabled and not state.active)
 
 
-def run_dm2(params, experimental):
+def run_dm2(params, experimental, drowsy_only=False):
   services = ['carState', 'selfdriveState', 'modelV2', 'radarState', 'liveCalibration', 'carParams', 'driverStateV2']
   # Like stock DM, use the polled service's frequency (20 Hz). SubMaster
   # forbids specifying both poll and frequency. The bounded update timeout
@@ -67,7 +67,7 @@ def run_dm2(params, experimental):
   # carState is 100 Hz; conflating it to 20 Hz can lose a complete button press.
   input_sock = messaging.sub_sock('carState', conflate=False)
   dm = DriverMonitoring2(rhd_saved=params.get_bool("IsRhdDetected"), always_on=params.get_bool("AlwaysOnDM"),
-                         experimental=experimental)
+                         experimental=experimental, drowsy_only=drowsy_only)
   traffic, inputs = TrafficContext(), InteractionEdges()
   bluetooth = CommandReader('attention')
   camera_health = CameraAvailability()
@@ -140,7 +140,7 @@ def run_dm2(params, experimental):
 def main():
   config_realtime_process([0, 1, 2, 3], 5)
   params = Params()
-  run_dm2(params, experimental_mode(params))
+  run_dm2(params, experimental_mode(params), drowsy_only_mode(params))
 
 
 if __name__ == '__main__':

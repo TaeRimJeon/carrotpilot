@@ -8,9 +8,10 @@ from openpilot.selfdrive.monitoring.policy import DriverMonitoring, AlertLevel, 
 class DriverMonitoring2(DriverMonitoring):
   INTERACTION_TIMEOUTS = (15.0, 30.0, 45.0)
 
-  def __init__(self, *args, experimental=False, **kwargs):
+  def __init__(self, *args, experimental=False, drowsy_only=False, **kwargs):
     super().__init__(*args, **kwargs)
     self.experimental = experimental
+    self.drowsy_only = drowsy_only
     self.stock_timeouts = {kind: self._timeouts(kind) for kind in ('VISION', 'WHEELTOUCH')}
     self.camera_available = True
     self.relax_pose = False
@@ -146,6 +147,11 @@ class DriverMonitoring2(DriverMonitoring):
         setattr(self.settings, field, value * 1.2)
     try:
       super()._get_distracted_types()
+      if self.drowsy_only:
+        # Drowsy-only mode keeps eye-closure and sleep detection while
+        # suppressing head-pose/gaze and phone distraction.
+        self.distracted_types['pose'] = False
+        self.distracted_types['phone'] = False
     finally:
       for field, value in zip(fields, previous, strict=True):
         setattr(self.settings, field, value)
@@ -189,6 +195,14 @@ class DriverMonitoring2(DriverMonitoring):
       self.alert_3_cnt += 1
       self.cnt_since_alert_3 = 0
     self.timing_crossed_terminal = False
+    if self.drowsy_only:
+      # Keep the current green/orange/red warning sequence and its active
+      # terminal-alert timer, but never accumulate counters that cause the
+      # DriverTooDistracted reuse lockout.
+      self.too_distracted = False
+      self.alert_3_cnt = 0
+      self.no_response_cnt = 0
+      self.lockout_time = 0
     if not op_engaged and not self.always_on:
       self.grace_started = -math.inf
 

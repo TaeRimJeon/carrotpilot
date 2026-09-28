@@ -2,8 +2,19 @@
 import os
 
 
+def monitoring_mode(params):
+  try:
+    return int(os.environ.get("CARROT_DM_MODE", str(params.get_int("DriverMonitoringMode"))))
+  except ValueError:
+    return 0
+
+
 def experimental_mode(params):
-  return os.environ.get("CARROT_DM_MODE", str(params.get_int("DriverMonitoringMode"))) == "1"
+  return monitoring_mode(params) == 1
+
+
+def drowsy_only_mode(params):
+  return monitoring_mode(params) == 2
 
 
 def configure_monitoring(params, environ=None):
@@ -13,4 +24,5 @@ def configure_monitoring(params, environ=None):
     if params.get("CarrotVisionEnabled") is None:
       params.put_bool("CarrotVisionEnabled", params.get_int("DisableDM") == 2)
     params.put_int("DriverMonitoringMode", 0)
-  env["CARROT_DM_MODE"] = "1" if params.get_int("DriverMonitoringMode") == 1 else "0"
+  mode = params.get_int("DriverMonitoringMode")
+  env["CARROT_DM_MODE"] = str(mode if mode in (0, 1, 2) else 0)
