@@ -134,6 +134,7 @@
                 "SteerActuatorDelay",
                 "LatSmoothSec",
                 "LatSuspendAngleDeg",
+                "BlinkerLateralSuspendSpeed",
                 "CustomSR",
                 "SteerRatioRate"
               ]
@@ -988,6 +989,22 @@
       "max": 30,
       "default": 13,
       "unit": 1
+    },
+    {
+      "group": "조향튜닝",
+      "name": "BlinkerLateralSuspendSpeed",
+      "title": "방향지시등 저속 자동조향 해제속도(60)",
+      "descr": "설정 속도 이하에서 방향지시등을 켜면 자동조향을 일시중지. 방향지시등을 끄면 자동조향을 다시 시작함. 0은 사용하지 않음.",
+      "egroup": "LAT",
+      "etitle": "Blinker Lateral Suspend Speed(60)",
+      "edescr": "Pauses lateral control below the set speed while a blinker is on. Resumes when the blinker is turned off. 0 disables this feature.",
+      "cgroup": "转向",
+      "ctitle": "转向灯低速自动转向暂停速度(60)",
+      "cdescr": "低于设定速度且转向灯开启时暂停自动转向。关闭转向灯后恢复。0为关闭。",
+      "min": 0,
+      "max": 120,
+      "default": 60,
+      "unit": 5
     },
     {
       "group": "조향튜닝",
