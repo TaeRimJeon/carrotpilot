@@ -106,6 +106,7 @@ class SelfdriveD:
     # read params
     self.is_metric = self.params.get_bool("IsMetric")
     self.is_ldw_enabled = self.params.get_bool("IsLdwEnabled")
+    self.driver_monitoring_mode = self.params.get_int("DriverMonitoringMode")
 
     car_recognized = self.CP.brand != 'mock'
 
@@ -592,6 +593,14 @@ class SelfdriveD:
     pers = LONGITUDINAL_PERSONALITY_MAP[self.personality]
     alerts = self.events.create_alerts(self.state_machine.current_alert_types, [self.CP, CS, self.sm, self.is_metric,
                                                                                 self.state_machine.soft_disable_timer, pers])
+
+    # Drowsy-only mode: add a single short sound to the first DM warning.
+    # Standard and experimental modes keep their original behavior.
+    if self.driver_monitoring_mode == 2:
+      for alert in alerts:
+        if alert.alert_type == "driverDistracted1/permanent":
+          alert.audible_alert = car.CarControl.HUDControl.AudibleAlert.prompt
+
     self.AM.add_many(self.sm.frame, alerts)
     self.AM.process_alerts(self.sm.frame, clear_event_types)
 

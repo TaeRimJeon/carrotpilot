@@ -351,6 +351,14 @@ class Device:
       log.SelfdriveState.AlertStatus.critical,
     )
 
+    # Driver-monitoring alert level one still has AlertStatus.normal,
+    # so wake the OLED explicitly from the first DM warning.
+    dm_state = ui_state.sm["driverMonitoringState"]
+    dm_alert_active = (
+      ui_state.sm.valid["driverMonitoringState"]
+      and dm_state.alertLevel != log.DriverMonitoringState.AlertLevel.none
+    )
+
     # Keep OLED awake while an external navigation countdown alert is active.
     nav_left_sec = int(ui_state.sm["carrotMan"].leftSec)
     nav_alert_active = ui_state.sm.valid["carrotMan"] and 0 <= nav_left_sec <= 11
@@ -359,8 +367,8 @@ class Device:
       self._oled_auto_off_start_time = 0.0
       self._set_awake(not interaction_timeout or PC)
     elif ui_state.started:
-      if alert_active or nav_alert_active:
-        # Keep OLED on while an important visual/navigation alert is active.
+      if alert_active or nav_alert_active or dm_alert_active:
+        # Keep OLED on while an important visual/navigation/DM alert is active.
         self._oled_auto_off_start_time = 0.0
         self._set_awake(True)
       elif touch:
