@@ -223,6 +223,10 @@ class CarController(CarControllerBase):
 
     self.lkas11_active = False
 
+    # One-shot legacy LDWS cluster warning test
+    self.ldw_test_done = False
+    self.ldw_test_end_frame = -1
+
     self.canfd_debug = 0
     self.MainMode_ACC_trigger = 0
     self.LFA_trigger = 0
@@ -453,6 +457,33 @@ class CarController(CarControllerBase):
     # HUD messages
     sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(CC.enabled, self.car_fingerprint,
                                                                                       hud_control)
+
+    # One-shot legacy LDWS cluster warning test.
+    # Wait at least 60 seconds, then run only while:
+    #   - transmission is in D
+    #   - vehicle is fully stopped
+    #   - brake pedal is pressed
+    #   - classic LKAS11 is actually available
+    ldw_test_ready = (
+      not self.ldw_test_done
+      and self.frame >= int(60.0 / DT_CTRL)
+      and str(CS.out.gearShifter) == "drive"
+      and CS.out.standstill
+      and CS.out.brakePressed
+      and CS.lkas11 is not None
+      and self.lkas11_active
+    )
+
+    if ldw_test_ready:
+      self.ldw_test_done = True
+      self.ldw_test_end_frame = self.frame + int(1.0 / DT_CTRL)
+
+    if self.ldw_test_done and self.frame < self.ldw_test_end_frame:
+      # Keep the 2016 LDWS cluster in its known green/active display state,
+      # and request only a left lane-departure warning.
+      sys_state = 4
+      left_lane_warning = 2
+      right_lane_warning = 0
 
     active_speed_decel = hud_control.activeCarrot == 3 and self.activeCarrot != 3 # 3: Speed Decel
     self.activeCarrot = hud_control.activeCarrot
