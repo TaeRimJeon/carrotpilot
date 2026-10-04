@@ -12,6 +12,9 @@ const terminalKeysEl = document.getElementById("terminalKeys");
 const btnTerminalCtrlCEl = document.getElementById("btnTerminalCtrlC");
 const btnTerminalClearEl = document.getElementById("btnTerminalClear");
 const btnTerminalReconnectEl = document.getElementById("btnTerminalReconnect");
+const btnTerminalCopyEl = document.getElementById("btnTerminalCopy");
+const btnTerminalPasteEl = document.getElementById("btnTerminalPaste");
+const btnTerminalHideKeyboardEl = document.getElementById("btnTerminalHideKeyboard");
 const terminalXtermEl = document.getElementById("terminalXterm");
 
 let terminalWs = null;
@@ -1102,6 +1105,130 @@ function connectTerminal(force = false) {
   };
 }
 
+function hideTerminalKeyboard() {
+  try { navigator.virtualKeyboard?.hide?.(); } catch {}
+  try {
+    terminalXterm?.textarea?.blur?.();
+    document.querySelector("#terminalXterm textarea.xterm-helper-textarea")?.blur?.();
+    document.activeElement?.blur?.();
+  } catch {}
+}
+
+function terminalVisibleText() {
+  if (!terminalXterm) return "";
+  const buffer = terminalXterm.buffer?.active;
+  if (!buffer) return "";
+  const start = Math.max(0, Number(buffer.viewportY || 0));
+  const end = Math.min(buffer.length, start + Math.max(1, Number(terminalXterm.rows || 1)));
+  const lines = [];
+  for (let row = start; row < end; row += 1) {
+    const line = buffer.getLine(row);
+    lines.push(line ? line.translateToString(true) : "");
+  }
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines.join("\n");
+}
+
+function fallbackTerminalCopy(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  Object.assign(area.style, { position: "fixed", left: "-9999px", top: "0", opacity: "0" });
+  document.body.appendChild(area);
+  area.focus();
+  area.select();
+  area.setSelectionRange(0, area.value.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch {}
+  area.remove();
+  return ok;
+}
+
+async function copyTerminalScreen(button) {
+  const text = terminalVisibleText();
+  if (!text) return;
+  let ok = false;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {}
+  }
+  if (!ok) ok = fallbackTerminalCopy(text);
+  if (button) {
+    const original = button.textContent;
+    button.textContent = ok ? "복사됨" : "실패";
+    window.setTimeout(() => { button.textContent = original; }, 1000);
+  }
+}
+
+function showTerminalPasteOverlay() {
+  document.getElementById("terminalPasteOverlay")?.remove();
+  hideTerminalKeyboard();
+
+  const overlay = document.createElement("div");
+  overlay.id = "terminalPasteOverlay";
+  Object.assign(overlay.style, {
+    position: "fixed", inset: "0", zIndex: "100000", background: "rgba(0,0,0,.58)",
+    display: "flex", alignItems: "flex-end", justifyContent: "center",
+    padding: "12px", boxSizing: "border-box",
+  });
+
+  const panel = document.createElement("div");
+  Object.assign(panel.style, {
+    width: "min(760px,100%)", maxHeight: "82vh", overflow: "auto",
+    background: "var(--md-surface,#161b22)", color: "var(--md-on-surface,#fff)",
+    border: "1px solid rgba(255,255,255,.18)", borderRadius: "14px",
+    padding: "12px", boxSizing: "border-box",
+  });
+
+  const title = document.createElement("div");
+  title.textContent = "터미널 붙여넣기";
+  title.style.fontWeight = "800";
+  title.style.marginBottom = "8px";
+
+  const area = document.createElement("textarea");
+  area.placeholder = "여기를 길게 눌러 붙여넣기";
+  area.autocapitalize = "off";
+  area.autocomplete = "off";
+  area.spellcheck = false;
+  Object.assign(area.style, {
+    width: "100%", minHeight: "150px", boxSizing: "border-box", borderRadius: "10px",
+    padding: "10px", background: "rgba(0,0,0,.25)", color: "inherit",
+    fontFamily: "monospace", fontSize: "14px", WebkitUserSelect: "text", userSelect: "text",
+  });
+
+  const note = document.createElement("div");
+  note.textContent = "내용만 입력합니다. Enter는 자동으로 보내지 않습니다.";
+  Object.assign(note.style, { fontSize: "11px", opacity: ".7", marginTop: "6px" });
+
+  const actions = document.createElement("div");
+  Object.assign(actions.style, { display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "10px" });
+
+  const cancel = document.createElement("button");
+  cancel.className = "smallBtn";
+  cancel.type = "button";
+  cancel.textContent = "취소";
+
+  const send = document.createElement("button");
+  send.className = "smallBtn";
+  send.type = "button";
+  send.textContent = "터미널로 입력";
+
+  const close = () => overlay.remove();
+  cancel.addEventListener("click", close);
+  overlay.addEventListener("click", (ev) => { if (ev.target === overlay) close(); });
+  send.addEventListener("click", () => {
+    if (area.value && sendTerminalPacket({ type: "raw", data: area.value }, { quiet: true })) close();
+  });
+
+  actions.append(cancel, send);
+  panel.append(title, area, note, actions);
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  window.setTimeout(() => area.focus(), 0);
+}
+
 function initTerminalBindings() {
   const bindNodeOnce = (node, key, fn, eventName = "click") => {
     if (!node || node.dataset[key] === "1") return;
@@ -1138,6 +1265,10 @@ function initTerminalBindings() {
     terminalResetPending = true;
     connectTerminal(true);
   });
+
+  bindNodeOnce(btnTerminalCopyEl, "clickBound", () => copyTerminalScreen(btnTerminalCopyEl));
+  bindNodeOnce(btnTerminalPasteEl, "clickBound", showTerminalPasteOverlay);
+  bindNodeOnce(btnTerminalHideKeyboardEl, "clickBound", hideTerminalKeyboard);
 
   // On-screen key bar (Esc/Ctrl/Tab/arrows) for touch devices. mousedown
   // preventDefault keeps focus on the grid so physical/virtual typing that

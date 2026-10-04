@@ -140,7 +140,10 @@ class Controls:
     # carrot
     gear = car.CarState.GearShifter
     driving_gear = CS.gearShifter not in (gear.neutral, gear.park, gear.reverse, gear.unknown)
-    lateral_enabled = driving_gear and self.params.get_bool("AlwaysLateral")
+    lateral_enabled = driving_gear and (
+      self.params.get_bool("AlwaysLateral")
+      or (self.CP.brand == "hyundai" and CS.cruiseState.available)
+    )
     #self.soft_hold_active = CS.softHoldActive #car.OnroadEvent.EventName.softHold in [e.name for e in self.sm['onroadEvents']]
 
     # Check which actuators can be enabled

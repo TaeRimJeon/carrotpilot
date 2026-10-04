@@ -265,6 +265,16 @@ def below_steer_speed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.S
     Priority.LOW, VisualAlert.none, AudibleAlert.prompt, 0.4)
 
 
+def driver_distracted1_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  # Stock mode remains silent at alert level 1. Drowsy-only adds the first beep.
+  audible = AudibleAlert.prompt if Params().get_int("DriverMonitoringMode") == 2 else AudibleAlert.none
+  return Alert(
+    "Pay Attention",
+    "",
+    AlertStatus.normal, AlertSize.small,
+    Priority.LOW, VisualAlert.none, audible, .1)
+
+
 def calibration_incomplete_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   first_word = tr("Recalibrating") if sm['liveCalibration'].calStatus == log.LiveCalibrationData.Status.recalibrating else tr("Calibrating")
   return Alert(
@@ -579,11 +589,7 @@ EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   EventName.driverDistracted1: {
-    ET.PERMANENT: Alert(
-      "Pay Attention",
-      "",
-      AlertStatus.normal, AlertSize.small,
-      Priority.LOW, VisualAlert.none, AudibleAlert.none, .1),
+    ET.PERMANENT: driver_distracted1_alert,
   },
 
   EventName.driverDistracted2: {

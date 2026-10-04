@@ -11,9 +11,18 @@ class CarrotControls:
 
   def lat_suspend_control(self, CS, latActive):
     suspend_angle = float(self.params.get_int("LatSuspendAngleDeg"))
+    blinker_speed_kph = self.params.get_int("BlinkerLateralSuspendSpeed")
     resume_angle  = 15
     delay_sec     = 1.0
     hold_sec      = 0.5
+
+    # Low-speed turn signal temporarily suspends lateral control.
+    # vEgo is m/s, setting is km/h. 0 disables this feature.
+    blinker_suspend = (
+      blinker_speed_kph > 0
+      and CS.vEgo <= blinker_speed_kph / 3.6
+      and (CS.leftBlinker or CS.rightBlinker)
+    )
 
     # 1) enter condition timer
     enter_cond = CS.steeringPressed and abs(CS.steeringAngleDeg) > suspend_angle
@@ -35,6 +44,6 @@ class CarrotControls:
         self.lat_suspend_active = False
         self.lat_suspend_enter_t = 0.0
 
-    if self.lat_suspend_active:
+    if self.lat_suspend_active or blinker_suspend:
       latActive = False
     return latActive

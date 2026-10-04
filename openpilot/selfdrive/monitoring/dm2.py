@@ -8,9 +8,10 @@ from openpilot.selfdrive.monitoring.policy import DriverMonitoring, AlertLevel, 
 class DriverMonitoring2(DriverMonitoring):
   INTERACTION_TIMEOUTS = (15.0, 30.0, 45.0)
 
-  def __init__(self, *args, experimental=False, **kwargs):
+  def __init__(self, *args, experimental=False, drowsy_only=False, **kwargs):
     super().__init__(*args, **kwargs)
     self.experimental = experimental
+    self.drowsy_only = bool(drowsy_only)
     self.context_strict = False
     self.stock_timeouts = {kind: self._timeouts(kind) for kind in ('VISION', 'WHEELTOUCH')}
     self.camera_available = True
@@ -72,6 +73,23 @@ class DriverMonitoring2(DriverMonitoring):
     self.forward_recovery = False
     # configure_context remaps elapsed time into the new budget on this frame.
     # Awareness, calibration, traffic hold, terminal counts and lockout survive.
+
+  def set_drowsy_only(self, drowsy_only):
+    drowsy_only = bool(drowsy_only)
+    if self.drowsy_only == drowsy_only:
+      return
+    self.drowsy_only = drowsy_only
+    self.grace_started = -math.inf
+    self.grace_expired = True
+    self.forward_frames = 0
+    self.forward_recovery = False
+    if drowsy_only:
+      # Mode 2 must never inherit a reuse lockout.
+      self.too_distracted = False
+      self.alert_3_cnt = 0
+      self.cnt_since_alert_3 = 0
+      self.no_response_cnt = 0
+      self.lockout_time = 0
 
   def _active_kind(self):
     return 'VISION' if self.active_policy == MonitoringPolicy.vision else 'WHEELTOUCH'
@@ -181,6 +199,10 @@ class DriverMonitoring2(DriverMonitoring):
         self.settings._PHONE_THRESH = 0.98
 
       super()._get_distracted_types()
+      if self.drowsy_only:
+        # Keep eye-closure and sleep; ignore head pose/gaze and phone.
+        self.distracted_types['pose'] = False
+        self.distracted_types['phone'] = False
     finally:
       for field, value in zip(fields, previous, strict=True):
         setattr(self.settings, field, value)
@@ -225,6 +247,13 @@ class DriverMonitoring2(DriverMonitoring):
       self.alert_3_cnt += 1
       self.cnt_since_alert_3 = 0
     self.timing_crossed_terminal = False
+    if self.drowsy_only:
+      # Preserve the warning level itself, but prevent reuse-lockout accumulation.
+      self.too_distracted = False
+      self.alert_3_cnt = 0
+      self.cnt_since_alert_3 = 0
+      self.no_response_cnt = 0
+      self.lockout_time = 0
     if not op_engaged and not self.always_on:
       self.grace_started = -math.inf
 

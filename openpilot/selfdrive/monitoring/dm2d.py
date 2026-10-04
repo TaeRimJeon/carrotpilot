@@ -8,7 +8,7 @@ import openpilot.cereal.messaging as messaging
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_DMON, Ratekeeper, config_realtime_process
-from openpilot.selfdrive.monitoring.config import experimental_mode
+from openpilot.selfdrive.monitoring.config import drowsy_only_mode, experimental_mode
 from openpilot.selfdrive.carrot.bluetooth.model import CommandReader
 from openpilot.selfdrive.monitoring.dm2 import DriverMonitoring2
 from openpilot.selfdrive.monitoring.dm2_cadence import DmRatekeeper
@@ -75,7 +75,7 @@ def parked_reset_eligible(sm, now, demo=False):
 
 def new_driver_monitor(params, experimental):
   return DriverMonitoring2(rhd_saved=params.get_bool("IsRhdDetected"), always_on=params.get_bool("AlwaysOnDM"),
-                           experimental=experimental)
+                           experimental=experimental, drowsy_only=drowsy_only_mode(params))
 
 
 def disabled_state_packet(rhd, experimental, monitor=None, valid=True, camera_unavailable=False):
@@ -187,6 +187,7 @@ def run_dm2(params, experimental, initial_car_params=None):
     mode_now = time.monotonic()
     if mode_now >= next_mode_check:
       dm.set_experimental(experimental_mode(params))
+      dm.set_drowsy_only(drowsy_only_mode(params))
       next_mode_check = mode_now + 0.5
     if disable_write_pending or rk.frame % 40 == 0:
       setting_enabled = params.get_bool("DriverMonitoringEnabled")

@@ -335,3 +335,40 @@ def test_standard_camera_matches_stock_including_face_loss_and_inputs(experiment
       policy._update_events(i % 53 == 0, True, False, False)
     for field in ('awareness', 'alert_level', 'active_policy', 'alert_3_cnt', 'no_response_cnt', 'too_distracted'):
       assert getattr(dm, field) == getattr(standard, field)
+
+
+def test_drowsy_only_filters_pose_phone_but_keeps_sleep():
+  dm = DriverMonitoring2(drowsy_only=True)
+  dm.configure_context(1, True)
+  msg = make_msg(True)
+  msg.leftDriverData.phoneProb = 0.99
+  msg.leftDriverData.sleepProb = 0.99
+  dm._update_states(msg, [0, 0, 0], 20, True, False)
+  assert not dm.distracted_types['pose']
+  assert not dm.distracted_types['phone']
+  assert dm.distracted_types['sleep']
+
+
+def test_drowsy_only_prevents_reuse_lockout_accumulation():
+  dm = DriverMonitoring2(drowsy_only=True)
+  dm.alert_3_cnt = dm.settings._MAX_ALERT_3
+  dm.no_response_cnt = dm.settings._MAX_NO_RESPONSE
+  dm.too_distracted = True
+  dm._update_events(False, True, False, False)
+  assert not dm.too_distracted
+  assert dm.alert_3_cnt == 0
+  assert dm.no_response_cnt == 0
+  assert dm.lockout_time == 0
+
+
+def test_drowsy_only_live_switch_preserves_awareness():
+  dm = DriverMonitoring2()
+  dm.awareness = 0.42
+  dm.alert_3_cnt = 2
+  dm.no_response_cnt = 1
+  dm.too_distracted = True
+  dm.set_drowsy_only(True)
+  assert dm.awareness == pytest.approx(0.42)
+  assert not dm.too_distracted
+  assert dm.alert_3_cnt == 0
+  assert dm.no_response_cnt == 0
