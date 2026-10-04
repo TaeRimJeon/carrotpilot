@@ -17,6 +17,7 @@ from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
 
 BACKLIGHT_OFFROAD = 65 if HARDWARE.get_device_type() == "mici" else 50
+OLED_AUTO_OFF_TIME_S = 10.0
 
 
 class UIStatus(Enum):
@@ -248,6 +249,7 @@ class Device:
     self._interactive_timeout_callbacks: list[Callable] = []
     self._prev_timed_out = False
     self._awake: bool = True
+    self._oled_auto_off_start_time: float = 0.0
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0
@@ -331,11 +333,13 @@ class Device:
         self._last_brightness = brightness
 
   def _update_wakefulness(self):
-    # Handle interactive timeout
+    # Keep stock timeout callbacks, but separate physical OLED power from
+    # rendering while driving so ScreenRecord can continue to capture frames.
     ignition_just_turned_off = not ui_state.ignition and self._ignition
     self._ignition = ui_state.ignition
+    touch = any(ev.left_down for ev in gui_app.mouse_events)
 
-    if ignition_just_turned_off or any(ev.left_down for ev in gui_app.mouse_events):
+    if ignition_just_turned_off or touch:
       self._reset_interactive_timeout()
       self._brightness_timer = 20
 
@@ -345,14 +349,42 @@ class Device:
         callback()
     self._prev_timed_out = interaction_timeout
 
-    self._set_awake(ui_state.ignition or not interaction_timeout or PC)
+    selfdrive_alert = ui_state.sm["selfdriveState"].alertStatus in (
+      log.SelfdriveState.AlertStatus.userPrompt,
+      log.SelfdriveState.AlertStatus.critical,
+    )
+    dm = ui_state.sm["driverMonitoringState"]
+    dm_alert = (
+      ui_state.sm.valid["driverMonitoringState"]
+      and not dm.dm2Disabled
+      and str(dm.alertLevel) != "none"
+    )
+
+    if not ui_state.ignition:
+      self._oled_auto_off_start_time = 0.0
+      self._set_awake(not interaction_timeout or PC)
+    elif ui_state.started:
+      if selfdrive_alert or dm_alert:
+        self._oled_auto_off_start_time = 0.0
+        self._set_awake(True)
+      elif touch:
+        self._oled_auto_off_start_time = time.monotonic()
+        self._set_awake(True)
+      else:
+        if self._oled_auto_off_start_time <= 0.0:
+          self._oled_auto_off_start_time = time.monotonic()
+        self._set_awake(PC or time.monotonic() - self._oled_auto_off_start_time < OLED_AUTO_OFF_TIME_S)
+    else:
+      self._oled_auto_off_start_time = 0.0
+      self._set_awake(True)
 
   def _set_awake(self, on: bool):
     if on != self._awake:
       self._awake = on
       cloudlog.debug(f"setting display power {int(on)}")
       HARDWARE.set_display_power(on)
-      gui_app.set_should_render(on)
+      # Onroad OLED-off must not stop the renderer: ScreenRecord depends on it.
+      gui_app.set_should_render(on or ui_state.started)
 
 
 # Global instance

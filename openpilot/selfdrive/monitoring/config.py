@@ -2,8 +2,17 @@
 import os
 
 
+def monitoring_mode(params):
+  mode = params.get_int("DriverMonitoringMode")
+  return mode if mode in (0, 1, 2) else 0
+
+
 def experimental_mode(params):
-  return params.get_int("DriverMonitoringMode") == 1
+  return monitoring_mode(params) == 1
+
+
+def drowsy_only_mode(params):
+  return monitoring_mode(params) == 2
 
 
 def configure_monitoring(params, environ=None):
