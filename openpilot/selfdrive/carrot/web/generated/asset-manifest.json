@@ -48,7 +48,7 @@
       "kind": "bundle",
       "source": "src/entries/terminal.js",
       "path": "js/generated/terminal.js",
-      "hash": "4515d91426b99de8f461a4d78791a91127ec80e237f482f91499af6bd718c6f1"
+      "hash": "8b9680a901c1b738b9b9afef388f4503df51ae37c209e3394b6969b2c038998b"
     },
     {
       "id": "terminal.shared",
