@@ -197,6 +197,12 @@ class CarInterface(CarInterfaceBase):
 
     # carrot, if camera_scc enabled, enable openpilotLongitudinalControl
     enable_radar_tracks = params.get_int("EnableRadarTracks")
+    # LF_SCC_LIVETRACKS_PATCH
+    # LF Sonata with stock SCC: make SCC11 available to liveTracks while
+    # keeping stock PCM longitudinal control (EnableRadarTracks=0).
+    if candidate == CAR.HYUNDAI_SONATA_LF and enable_radar_tracks == 0:
+      ret.radarUnavailable = False
+
     if ret.flags & HyundaiFlags.CAMERA_SCC.value or enable_radar_tracks > 0 or enable_radar_tracks == -2:
       ret.radarUnavailable = False
       ret.openpilotLongitudinalControl = True if camera_scc < 3 else False
