@@ -1,4 +1,5 @@
 from collections import deque
+from pathlib import Path
 
 import numpy as np
 from opendbc.can import CANPacker
@@ -236,11 +237,264 @@ class CarController(CarControllerBase):
     self.activeCarrot = 0
     self.camera_scc_params = Params().get_int("HyundaiCameraSCC")
     self.is_ldws_car = Params().get_bool("IsLdwsCar")
+    self.oem_lkas_diag = Params().get_bool("OemLkasDiagActive")
+    # Temporary stationary-only LF cluster warning test.
+    self.oem_warning_test_value = 0
+    self.oem_warning_test_end_frame = 0
+    self.oem_warning_test_trigger = Path("/dev/shm/oem_lkas_warning_test")
+    self.oem_warning_test_status = Path("/dev/shm/oem_lkas_warning_status")
+
+    # Never replay a stale request after a process/device restart.
+    self.oem_warning_test_trigger.unlink(missing_ok=True)
+    self.oem_warning_test_status.unlink(missing_ok=True)
     self.enable_corner_radar = 0
     self.paddle_mode = Params().get_int("PaddleMode")
 
     self.steerDeltaUpOrg = self.steerDeltaUp = self.steerDeltaUpLC = self.params.STEER_DELTA_UP
     self.steerDeltaDownOrg = self.steerDeltaDown = self.steerDeltaDownLC = self.params.STEER_DELTA_DOWN
+
+
+  def _oem_warning_test_write_status(self, text):
+    try:
+      self.oem_warning_test_status.write_text(
+        text + "\n",
+        encoding="utf-8",
+      )
+    except OSError as e:
+      print(f"OEM warning test status write failed: {e}")
+
+
+  def _oem_warning_test_safe(self, CC, CS):
+    if not self.oem_lkas_diag:
+      return False, "OEM diagnostic mode inactive"
+
+    if not CS.out.standstill or abs(CS.out.vEgo) > 0.1:
+      return False, "vehicle is not stationary"
+
+    if CS.out.gearShifter != structs.CarState.GearShifter.park:
+      return False, "gear is not PARK"
+
+    if CC.enabled or CC.latActive:
+      return False, "Carrot control is enabled"
+
+    if CS.lkas11 is None:
+      return False, "OEM LKAS11 is unavailable"
+
+    try:
+      act_toi = int(
+        CS.lkas11.get(
+          "CF_Lkas_ActToi",
+          0,
+        )
+      )
+
+      torque_req = float(
+        CS.lkas11.get(
+          "CR_Lkas_StrToqReq",
+          0,
+        )
+      )
+
+      toi_flt = int(
+        CS.lkas11.get(
+          "CF_Lkas_ToiFlt",
+          0,
+        )
+      )
+
+    except (TypeError, ValueError):
+      return False, "invalid OEM LKAS11 values"
+
+    if act_toi != 0:
+      return False, f"OEM ActToi is active ({act_toi})"
+
+    if abs(torque_req) > 1.0:
+      return False, f"OEM torque request is not zero ({torque_req})"
+
+    if toi_flt != 0:
+      return False, f"OEM ToiFlt is active ({toi_flt})"
+
+    return True, "safe"
+
+
+  def _poll_oem_warning_test(self, CC, CS):
+    if not self.oem_warning_test_trigger.exists():
+      return
+
+    try:
+      raw = self.oem_warning_test_trigger.read_text(
+        encoding="utf-8"
+      ).strip()
+
+    except OSError as e:
+      self._oem_warning_test_write_status(
+        f"REJECT trigger read failed: {e}"
+      )
+      return
+
+    finally:
+      self.oem_warning_test_trigger.unlink(
+        missing_ok=True
+      )
+
+    try:
+      requested = int(raw)
+    except ValueError:
+      self._oem_warning_test_write_status(
+        f"REJECT invalid value: {raw!r}"
+      )
+      return
+
+    if requested not in (4, 5, 6):
+      self._oem_warning_test_write_status(
+        f"REJECT unsupported SysWarning={requested}"
+      )
+      return
+
+    safe, reason = self._oem_warning_test_safe(
+      CC,
+      CS,
+    )
+
+    if not safe:
+      self._oem_warning_test_write_status(
+        f"REJECT SysWarning={requested}: {reason}"
+      )
+      return
+
+    self.oem_warning_test_value = requested
+
+    self.oem_warning_test_end_frame = (
+      self.frame
+      + max(
+        1,
+        int(round(1.0 / DT_CTRL)),
+      )
+    )
+
+    self._oem_warning_test_write_status(
+      f"START SysWarning={requested} duration=1.0s"
+    )
+
+    print(
+      f"OEM LKAS warning test START: SysWarning={requested}"
+    )
+
+
+  def _oem_warning_test_active(self, CC, CS):
+    if self.oem_warning_test_value not in (4, 5, 6):
+      return False
+
+    if self.frame >= self.oem_warning_test_end_frame:
+      completed = self.oem_warning_test_value
+
+      self.oem_warning_test_value = 0
+      self.oem_warning_test_end_frame = 0
+
+      self._oem_warning_test_write_status(
+        f"DONE SysWarning={completed}"
+      )
+
+      print(
+        f"OEM LKAS warning test DONE: SysWarning={completed}"
+      )
+
+      return False
+
+    safe, reason = self._oem_warning_test_safe(
+      CC,
+      CS,
+    )
+
+    if not safe:
+      aborted = self.oem_warning_test_value
+
+      self.oem_warning_test_value = 0
+      self.oem_warning_test_end_frame = 0
+
+      self._oem_warning_test_write_status(
+        f"ABORT SysWarning={aborted}: {reason}"
+      )
+
+      print(
+        f"OEM LKAS warning test ABORT: {reason}"
+      )
+
+      return False
+
+    return True
+
+
+  def _create_oem_warning_test_lkas11(self, lkas11, warning):
+    # Copy every decoded LKAS11 field that affects the original frame.
+    # Only CF_Lkas_SysWarning is deliberately changed.
+    fields = (
+      "CF_Lkas_LdwsActivemode",
+      "CF_Lkas_LdwsSysState",
+      "CF_Lkas_SysWarning",
+      "CF_Lkas_LdwsLHWarning",
+      "CF_Lkas_LdwsRHWarning",
+      "CF_Lkas_HbaLamp",
+      "CF_Lkas_FcwBasReq",
+      "CR_Lkas_StrToqReq",
+      "CF_Lkas_ActToi",
+      "CF_Lkas_ToiFlt",
+      "CF_Lkas_HbaSysState",
+      "CF_Lkas_FcwOpt",
+      "CF_Lkas_HbaOpt",
+      "CF_Lkas_MsgCount",
+      "CF_Lkas_FcwSysState",
+      "CF_Lkas_FcwCollisionWarning",
+      "CF_Lkas_FusionState",
+      "CF_Lkas_Unknown1",
+      "CF_Lkas_Chksum",
+      "CF_Lkas_FcwOpt_USM",
+      "CF_Lkas_LdwsOpt_USM",
+      "CF_Lkas_Unknown2",
+    )
+
+    values = {
+      name: lkas11[name]
+      for name in fields
+    }
+
+    # The only intentional payload change.
+    values["CF_Lkas_SysWarning"] = warning
+
+    # Never synthesize AEB/FCW/BAS requests.
+    # Their copied OEM values remain unchanged.
+    values["CF_Lkas_Chksum"] = 0
+
+    dat = self.packer.make_can_msg(
+      "LKAS11",
+      0,
+      values,
+    )[1]
+
+    if self.CP.flags & HyundaiFlags.CHECKSUM_CRC8:
+      checksum = hyundaican.hyundai_checksum(
+        dat[:6] + dat[7:8]
+      )
+
+    elif self.CP.flags & HyundaiFlags.CHECKSUM_6B:
+      checksum = sum(
+        dat[:6]
+      ) % 256
+
+    else:
+      checksum = (
+        sum(dat[:6])
+        + dat[7]
+      ) % 256
+
+    values["CF_Lkas_Chksum"] = checksum
+
+    return self.packer.make_can_msg(
+      "LKAS11",
+      0,
+      values,
+    )
+
 
   def update(self, CC, CS, now_nanos):
 
@@ -284,8 +538,11 @@ class CarController(CarControllerBase):
 
       self.canfd_debug = params.get_int("CanfdDebug")
       self.camera_scc_params = params.get_int("HyundaiCameraSCC")
+      self.oem_lkas_diag = params.get_bool("OemLkasDiagActive")
       self.enable_corner_radar = params.get_int("EnableCornerRadar")
       self.paddle_mode = params.get_int("PaddleMode")
+
+      self._poll_oem_warning_test(CC, CS)
 
     actuators = CC.actuators
     hud_control = CC.hudControl
@@ -602,7 +859,16 @@ class CarController(CarControllerBase):
           can_sends.extend(self.create_button_messages(CC, CS, use_clu11=False))
     else:
       if CS.lkas11 is not None:
-        if self.lkas11_active:
+        # OEM diagnostic mode:
+        # stop Carrot 0x340 and allow the real camera LKAS11 through.
+        if self._oem_warning_test_active(CC, CS):
+          can_sends.append(
+            self._create_oem_warning_test_lkas11(
+              CS.lkas11,
+              self.oem_warning_test_value,
+            )
+          )
+        elif self.lkas11_active and not self.oem_lkas_diag:
           can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
                                                     torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
                                                     hud_control.leftLaneVisible, hud_control.rightLaneVisible,
@@ -612,7 +878,10 @@ class CarController(CarControllerBase):
 
       if not self.CP.openpilotLongitudinalControl:
         can_sends.extend(self.create_button_messages(CC, CS, use_clu11=True))
-      if self.CP.carFingerprint in CAN_GEARS["send_mdps12"] and CS.mdps12 is not None:  # send mdps12 to LKAS to prevent LKAS error
+      if self.CP.carFingerprint in CAN_GEARS["send_mdps12"] and CS.mdps12 is not None and not self.oem_lkas_diag:
+        # Normal mode may synthesize MDPS12 for selected platforms.
+        # Diagnostic mode must leave the real vehicle MDPS12 untouched so the
+        # OEM camera receives the real steering feedback / ToiActive response.
         can_sends.append(hyundaican.create_mdps12(self.packer, self.frame, CS.mdps12))
 
       casper_ev = self.CP.carFingerprint == CAR.HYUNDAI_CASPER_EV
@@ -633,7 +902,8 @@ class CarController(CarControllerBase):
 
 
       # 20 Hz LFA MFA message
-      if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
+      if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value and not self.oem_lkas_diag:
+        # Do not overwrite OEM lateral/cluster state during diagnostic mode.
         can_sends.append(hyundaican.create_lfahda_mfc(self.packer, CC, self.blinking_signal))
 
       # 5 Hz ACC options

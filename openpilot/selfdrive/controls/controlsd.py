@@ -15,6 +15,7 @@ from collections import deque
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.vehicle_model import VehicleModel
+from opendbc.car.hyundai.values import HyundaiFlags
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
@@ -154,6 +155,42 @@ class Controls:
                                            CS.steerFaultTemporary, CS.steerFaultPermanent, below_min_speed,
                                            CS.standstill, steer_at_standstill)
     CC.latActive = self.carrot_controls.lat_suspend_control(CS, CC.latActive)
+
+    # OEM LKAS diagnostic mode effective latch.
+    #
+    # OemLkasDiag is the user's requested setting.
+    # OemLkasDiagActive is the actually applied state.
+    #
+    # Never change steering ownership while moving. A requested change is
+    # accepted only after the vehicle reaches standstill.
+    oem_lkas_diag_supported = (
+      self.CP.brand == "hyundai"
+      and not (self.CP.flags & HyundaiFlags.CANFD)
+    )
+
+    oem_lkas_diag_requested = (
+      oem_lkas_diag_supported
+      and self.params.get_bool("OemLkasDiag")
+    )
+
+    oem_lkas_diag_active = (
+      oem_lkas_diag_supported
+      and self.params.get_bool("OemLkasDiagActive")
+    )
+
+    if (
+      CS.standstill
+      and oem_lkas_diag_requested != oem_lkas_diag_active
+    ):
+      oem_lkas_diag_active = oem_lkas_diag_requested
+
+      self.params.put_bool_nonblocking(
+        "OemLkasDiagActive",
+        oem_lkas_diag_active,
+      )
+
+    if oem_lkas_diag_active:
+      CC.latActive = False
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
 
     # AlwaysLateral must also stop while manager drains workers for this reboot.

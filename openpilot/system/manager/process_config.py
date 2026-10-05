@@ -1,8 +1,10 @@
 import os
 import platform
 import importlib.util
+from pathlib import Path
 
 from openpilot.cereal import car
+from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.common.params import Params
 from openpilot.system.hardware import PC, TICI
 from openpilot.system.manager.process import PythonProcess, NativeProcess, DaemonProcess
@@ -60,6 +62,16 @@ def always_run(started: bool, params: Params, CP: car.CarParams) -> bool:
 
 def only_onroad(started: bool, params: Params, CP: car.CarParams) -> bool:
   return started
+
+
+def enable_oem_lkas_diag(started: bool, params: Params, CP: car.CarParams) -> bool:
+  return (
+    started
+    and CP.brand == "hyundai"
+    and not (CP.flags & HyundaiFlags.CANFD)
+    and params.get_bool("OemLkasDiagActive")
+    and Path("/data/oemlkas").is_file()
+  )
 
 
 def only_offroad(started: bool, params: Params, CP: car.CarParams) -> bool:
@@ -195,6 +207,12 @@ procs = [
   PythonProcess("carrot_webrtcd", "openpilot.system.webrtc.carrot_webrtcd", and_(iscar, enable_webrtc)),
   PythonProcess("webjoystick", "openpilot.tools.bodyteleop.web", notcar, enabled=BODYTELEOP_AVAILABLE),
   PythonProcess("joystick", "openpilot.tools.joystick.joystick_control", and_(joystick, iscar)),
+
+  # Passive OEM LKAS/MDPS recorder.
+  # Starts only while the effective diagnostic mode is active.
+  NativeProcess("oem_lkas_diag", "/data",
+                ["./oemlkas", "--label", "auto_diag"],
+                enable_oem_lkas_diag),
 
   PythonProcess("carrot_man", "openpilot.selfdrive.carrot.carrot_man", always_run, restart_if_crash=True),#, enabled=not PC),
   # carrot_navi permanently owns TCP 7714 and publishes navigation data over cereal.
