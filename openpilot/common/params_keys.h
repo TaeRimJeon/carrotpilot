@@ -313,6 +313,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SoftwareMenu", {PERSISTENT, INT, "1"}},
 
     {"HyundaiCameraSCC", {PERSISTENT, INT, "0"}},
+    {"OemLkasDiag", {PERSISTENT, BOOL, "0"}},
+    {"OemLkasDiagActive", {CLEAR_ON_MANAGER_START | CLEAR_ON_OFFROAD_TRANSITION, BOOL}},
     {"HyundaiCanfdClusterDirectTx", {PERSISTENT, BOOL, "0"}},
     {"FingerPrints", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING}},
     {"IsLdwsCar", {PERSISTENT, INT, "0"}},

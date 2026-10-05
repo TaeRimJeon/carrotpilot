@@ -395,6 +395,7 @@
           "params": [
             "HyundaiCameraSCC",
             "IsLdwsCar",
+            "OemLkasDiag",
             "HapticFeedbackWhenSpeedCamera"
           ]
         },
@@ -2708,6 +2709,23 @@
       "max": 1,
       "default": 0,
       "unit": 1
+    },
+    {
+      "group": "시작",
+      "name": "OemLkasDiag",
+      "title": "OEM LKAS 진단모드",
+      "descr": "순정 LKAS 카메라와 MDPS의 조향 신호를 그대로 통과시키고 당근은 신호만 기록합니다. 주행 중 토글을 변경해도 즉시 전환하지 않고 차량이 정차하면 적용됩니다. 진단모드가 활성화되면 /data/oemlkas 기록도 자동 시작됩니다.",
+      "egroup": "START",
+      "etitle": "OEM LKAS Diagnostic Mode",
+      "edescr": "Pass the stock LKAS camera and real MDPS steering loop through unchanged while Carrot only monitors and records. Changes requested while moving are applied only after the vehicle stops. The OEM LKAS recorder starts automatically.",
+      "cgroup": "启动设置",
+      "ctitle": "OEM LKAS 诊断模式",
+      "cdescr": "保持原厂 LKAS 摄像头与真实 MDPS 转向闭环，Carrot 仅监视和记录。行驶中切换将在车辆停止后生效。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle"
     },
     {
       "group": "시작",
