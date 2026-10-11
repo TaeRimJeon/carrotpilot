@@ -250,6 +250,9 @@ class Device:
     self._prev_timed_out = False
     self._awake: bool = True
     self._oled_auto_off_start_time: float = 0.0
+    # OLED_SOUND_WAKE_BRIDGE_V1
+    self._oled_sound_last_event = None
+    self._oled_sound_keep_until: float = 0.0
 
     self._offroad_brightness: int = BACKLIGHT_OFFROAD
     self._last_brightness: int = 0
@@ -332,6 +335,26 @@ class Device:
         self._brightness_thread.start()
         self._last_brightness = brightness
 
+  def _oled_sound_wake(self, now: float) -> bool:
+    # OLED_SOUND_WAKE_BRIDGE_V1: read only a fresh soundd heartbeat.
+    import json
+    from pathlib import Path
+    try:
+      state = json.loads(Path('/dev/shm/oled_sound_wake.json').read_text())
+      stamp = float(state['ts'])
+      if not 0 <= now - stamp < 2.5:
+        return now < self._oled_sound_keep_until
+      event = (int(state['pid']), int(state['seq']))
+      if int(state['seq']) > 0 and event != self._oled_sound_last_event:
+        self._oled_sound_last_event = event
+        self._oled_sound_keep_until = max(self._oled_sound_keep_until, now + 30.0)
+      if bool(state['active']):
+        self._oled_sound_keep_until = max(self._oled_sound_keep_until, now + 30.0)
+        return True
+    except (OSError, ValueError, KeyError, TypeError):
+      pass
+    return now < self._oled_sound_keep_until
+
   def _update_wakefulness(self):
     # Keep stock timeout callbacks, but separate physical OLED power from
     # rendering while driving so ScreenRecord can continue to capture frames.
@@ -364,7 +387,8 @@ class Device:
       self._oled_auto_off_start_time = 0.0
       self._set_awake(not interaction_timeout or PC)
     elif ui_state.started:
-      if selfdrive_alert or dm_alert:
+      sound_wake = self._oled_sound_wake(time.monotonic())
+      if selfdrive_alert or dm_alert or sound_wake:
         self._oled_auto_off_start_time = 0.0
         self._set_awake(True)
       elif touch:

@@ -187,6 +187,12 @@ class Soundd:
     self.current_volume = MIN_VOLUME
     self.current_sound_frame = 0
 
+    # OLED_SOUND_WAKE_BRIDGE_V1: send sound events outside the audio callback.
+    self._oled_sound_seq = 0
+    self._oled_sound_last_publish = 0.0
+    self._oled_sound_last_active = None
+    self._oled_sound_last_seq = -1
+
     self.selfdrive_timeout_alert = False
 
     self.spl_filter_weighted = FirstOrderFilter(0, 2.5, FILTER_DT, initialized=False)
@@ -280,6 +286,8 @@ class Soundd:
       self.current_alert = new_alert
       self.current_sound_frame = 0
       self.current_alert_type = alert_type
+      if new_alert != AudibleAlert.none:
+        self._oled_sound_seq += 1
     elif self.current_alert == new_alert:
       # The same WAV may now belong to a different event; do not retain DM gain.
       self.current_alert_type = alert_type
@@ -310,6 +318,37 @@ class Soundd:
     elif self.selfdrive_timeout_alert:
       self.update_alert(AudibleAlert.none)
       self.selfdrive_timeout_alert = False
+
+  def publish_oled_sound_state(self):
+    # OLED_SOUND_WAKE_BRIDGE_V1: never write from the real-time audio callback.
+    # A 1-second heartbeat lets UI discard stale state if soundd crashes.
+    import json
+    from pathlib import Path
+    now = time.monotonic()
+    alert = self.current_alert
+    active = False
+    if alert != AudibleAlert.none and alert in self.loaded_sounds:
+      loops = sound_list[alert][1]
+      active = loops is None or self.current_sound_frame < len(self.loaded_sounds[alert]) * loops
+    if (active == self._oled_sound_last_active and
+        self._oled_sound_seq == self._oled_sound_last_seq and
+        now - self._oled_sound_last_publish < 1.0):
+      return
+    path = Path('/dev/shm/oled_sound_wake.json')
+    tmp = path.with_name(f'.oled_sound_wake_{os.getpid()}.tmp')
+    try:
+      path.parent.mkdir(parents=True, exist_ok=True)
+      tmp.write_text(json.dumps({'pid': os.getpid(), 'seq': self._oled_sound_seq,
+                                 'active': active, 'ts': now}))
+      os.replace(tmp, path)
+      self._oled_sound_last_active = active
+      self._oled_sound_last_seq = self._oled_sound_seq
+      self._oled_sound_last_publish = now
+    except OSError as e:
+      # Display wake must never interrupt audio.
+      if now - self._oled_sound_last_publish > 30.0:
+        cloudlog.warning(f'OLED sound wake state unavailable: {e}')
+        self._oled_sound_last_publish = now
 
   def calculate_volume(self, weighted_db):
     volume = ((weighted_db - AMBIENT_DB) / DB_SCALE) * (MAX_VOLUME - MIN_VOLUME) + MIN_VOLUME
@@ -347,6 +386,7 @@ class Soundd:
         else:
           self.get_audible_alert(sm)
 
+        self.publish_oled_sound_state()
         rk.keep_time()
 
         assert stream.active
